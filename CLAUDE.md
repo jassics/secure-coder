@@ -2,8 +2,8 @@
 
 ## STANDARDS THIS PROFILE IS ALIGNED TO
 
-- **OWASP ASVS 5.0** — control catalogue (V1–V17). Chapter refs are inlined next to rules below, e.g. `(ASVS V5.2)`.
-- **OWASP SAMM v2** — this file operationalizes SAMM's *Secure Build* and *Implementation* practice streams; adopting it moves a team from ad-hoc to a repeatable Level 2 practice, not a certification.
+- **OWASP ASVS 5.0** — control catalogue (V1–V17, May 2025 renumbering — chapters differ from ASVS 4.x). Chapter refs are inlined next to rules below, verified against the actual v5.0 chapter list, e.g. `(ASVS V9 — Self-contained Tokens)`.
+- **OWASP SAMM v2** — this file operationalizes the *Secure Build* practice under SAMM's *Implementation* business function; adopting it moves a team from ad-hoc to a repeatable maturity level, not a certification.
 - **NIST SSDF (SP 800-218)** — practice groups PO (Prepare Org), PS (Protect Software), PW (Produce Well-Secured Software), RV (Respond to Vulns). Referenced as `(SSDF PW.x)` etc. where applicable, drafted from the published practice descriptions.
 - **CISA / OWASP Secure by Design** — backs the "secure defaults always, no insecure shortcuts" core rule.
 - **OWASP Top 10 (Web, API, LLM)** — backs injection/authn/authz/SSRF sections.
@@ -56,7 +56,7 @@ Ask the developer:
 > - **PRD** — data sensitivity and user trust levels
 > - **HLD** — service boundaries and integration points
 > - **LLD** — component interactions and data flows
-> - **DFD** — trust boundaries and where data crosses them *(ASVS V1 — architecture)*
+> - **DFD** — trust boundaries and where data crosses them *(ASVS V15.1 — Secure Coding and Architecture Documentation)*
 > - **API contract** (OpenAPI/Swagger/GraphQL schema) — exposed surfaces
 > - **Threat model**, if one exists
 
@@ -79,24 +79,24 @@ Based on detected language(s), activate the corresponding security profile(s) fr
 2. **Secure defaults always.** If a configuration parameter has a secure and an insecure default, always use the secure one. Never leave security-relevant config as a TODO.
 3. **Explain every security decision inline.** Add a `// SECURITY:` comment when you make a deliberate security choice, e.g.:
    ```java
-   // SECURITY: Parameterized query to prevent SQL injection (ASVS V5.3.4)
+   // SECURITY: Parameterized query to prevent SQL injection (ASVS V1.2.4 — Injection Prevention)
    PreparedStatement stmt = conn.prepareStatement("SELECT * FROM users WHERE id = ?");
    ```
 4. **Raise, don't suppress.** If uncertain whether a pattern is safe in this specific codebase context, stop and ask before writing. Do not guess.
-5. **No secrets in code.** Never write API keys, passwords, tokens, or cryptographic material inline. Always reference environment variables or secret managers. *(ASVS V6.4, SSDF PS.2)*
-6. **Principle of least privilege.** Scope tokens, permissions, DB users, and IAM roles to the minimum needed for the specific operation. *(ASVS V4)*
+5. **No secrets in code.** Never write API keys, passwords, tokens, or cryptographic material inline. Always reference environment variables or secret managers. *(ASVS V13.3 — Secret Management, SSDF PS.2)*
+6. **Principle of least privilege.** Scope tokens, permissions, DB users, and IAM roles to the minimum needed for the specific operation. *(ASVS V8 — Authorization / Least Privilege)*
 7. **Defense in depth.** Apply multiple layers. Validation at the edge does not remove the need for parameterized queries at the DB layer.
-8. **Fail securely.** Errors must not leak stack traces, internal paths, DB schema, or user data to the client. Log internally, return a safe generic message externally. *(ASVS V7.4)*
+8. **Fail securely.** Errors must not leak stack traces, internal paths, DB schema, or user data to the client. Log internally, return a safe generic message externally. *(ASVS V16.5 — Error Handling)*
 
 ## LANGUAGE-SPECIFIC SECURITY RULES
 
 ### JAVA (Spring Boot / Jakarta EE / Plain Java)
 
-#### Injection *(ASVS V5.3 — Injection Prevention)*
+#### Injection *(ASVS V1.2 — Injection Prevention)*
 
 - **SQL**: Always use `PreparedStatement` or Spring Data / JPA named parameters. Never concatenate user input. JPQL is not immune — use `@Query` with `:param` syntax, not string concat.
 - **Command injection**: Never pass user input to `Runtime.exec()`, `ProcessBuilder`, or `ScriptEngine.eval()`. If shell execution is needed, use an allowlist of commands.
-- **XXE**: Always disable external entity processing on XML parsers *(ASVS V5.5.2)*:
+- **XXE**: Always disable external entity processing on XML parsers *(ASVS V1.5.1 — Safe Deserialization / XXE)*:
   ```java
   // SECURITY: Disabling XXE to prevent external entity attacks
   factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
@@ -104,7 +104,7 @@ Based on detected language(s), activate the corresponding security profile(s) fr
   ```
 - **SSTI**: Do not pass user input into Freemarker/Thymeleaf template strings directly.
 
-#### Deserialization *(ASVS V5.5)*
+#### Deserialization *(ASVS V1.5 — Safe Deserialization)*
 
 Never deserialize untrusted data with native Java serialization (`ObjectInputStream`). Use JSON (Jackson) with `@JsonTypeInfo` restricted to known subtypes:
 ```java
@@ -112,14 +112,14 @@ Never deserialize untrusted data with native Java serialization (`ObjectInputStr
 mapper.deactivateDefaultTyping();
 ```
 
-#### Authentication & Authorization *(ASVS V6, V7)*
+#### Authentication & Authorization *(ASVS V6 — Authentication, V8 — Authorization)*
 
 - Use Spring Security — never roll custom auth.
 - Method-level authorization: `@PreAuthorize("hasRole('...')")`, not manual `if` checks scattered in the service layer.
 - Always verify authorization server-side for every request. Do not rely on client-side role checks.
 - CSRF: enable for stateful apps (`CsrfConfigurer`) — do not `.csrf().disable()` unless explicitly a JWT-only stateless API.
 
-#### JWT *(ASVS V6.3 — Token-based session management)*
+#### JWT *(ASVS V9 — Self-contained Tokens)*
 
 Algorithm: RS256 or ES256 only. Never HS256 with a weak secret. Reject `alg: none`.
 ```java
@@ -131,18 +131,18 @@ JwtParser parser = Jwts.parserBuilder()
 ```
 Validate `exp`, `iat`, `iss`, `aud` on every token. Store signing keys in KMS/Vault, not application config.
 
-#### Cryptography *(ASVS V9)*
+#### Cryptography *(ASVS V11 — Cryptography)*
 
 - Password hashing: `BCryptPasswordEncoder` (cost ≥ 12) or Argon2. Never MD5/SHA-1/SHA-256 for passwords.
 - Encryption: AES-256-GCM. Never ECB mode. Generate IV randomly per operation.
 - Random: `SecureRandom` only. Never `java.util.Random` for security purposes.
 - TLS: enforce TLS 1.2+ in `SSLContext`. Disable SSLv3, TLS 1.0, TLS 1.1.
 
-#### SSRF *(ASVS V12.6)*
+#### SSRF *(ASVS V1.3.6 — Sanitization)*
 
 Validate and restrict URLs before making outbound HTTP calls. Maintain an allowlist of permitted hosts/schemes. Block private IP ranges (`10.x`, `172.16.x`, `192.168.x`, `169.254.x`, `::1`). Use `RestTemplate`/`WebClient` with explicit timeout configuration.
 
-#### Logging *(ASVS V8 — Data Protection / Logging)*
+#### Logging *(ASVS V16 — Security Logging and Error Handling)*
 
 - Never log: passwords, tokens, PII (name, email, SSN, CC), request bodies containing sensitive fields.
 - Use structured logging (Logback/Log4j2 with JSON appender).
@@ -152,7 +152,7 @@ Validate and restrict URLs before making outbound HTTP calls. Maintain an allowl
   log.info("User action: {}", userInput.replaceAll("[\r\n]", "_"));
   ```
 
-#### HTTP Security Headers *(ASVS V11.7)*
+#### HTTP Security Headers *(ASVS V3.4 — Browser Security Mechanism Headers)*
 
 ```java
 http.headers(headers -> headers
@@ -170,7 +170,7 @@ Use `dependencyCheck` (OWASP) in the build pipeline. Flag any library with a kno
 
 ### PYTHON (Flask / Django / FastAPI / Plain Python)
 
-#### Injection *(ASVS V5.3)*
+#### Injection *(ASVS V1.2 — Injection Prevention)*
 
 - **SQL**: Always use ORM (SQLAlchemy, Django ORM) or parameterized queries. Never f-strings or `.format()` in SQL:
   ```python
@@ -192,7 +192,7 @@ Use `dependencyCheck` (OWASP) in the build pipeline. Flag any library with a kno
 
 Never use `pickle` with untrusted data. Use JSON. If pickle is unavoidable (e.g. ML model loading), load only from trusted, integrity-verified sources (signed S3 object, checksum validated).
 
-#### Authentication & Authorization *(ASVS V6, V7)*
+#### Authentication & Authorization *(ASVS V6 — Authentication, V8 — Authorization)*
 
 - Django: `@login_required`, `PermissionRequiredMixin`. Never manually check `request.user` in every view.
 - Flask: `flask-login` + `@login_required`. Never store user state in a client-side cookie without signing.
@@ -211,17 +211,17 @@ payload = jwt.decode(
 )
 ```
 
-#### Cryptography *(ASVS V9)*
+#### Cryptography *(ASVS V11 — Cryptography)*
 
 - Passwords: `bcrypt` or `argon2-cffi`. Never `hashlib.md5`/`sha1`/`sha256` for passwords.
 - Encryption: `cryptography` library (Fernet for symmetric, hazmat for AES-GCM). Never `pycrypto` (unmaintained).
 - Secrets: `secrets` module for tokens/OTPs. Never `random`.
 
-#### SSRF *(ASVS V12.6)*
+#### SSRF *(ASVS V1.3.6 — Sanitization)*
 
 Validate URL scheme (allow only `https`), resolve hostname, block private IP ranges before calling `requests.get()`. Set explicit `timeout=` on all `requests` calls — never leave unbounded.
 
-#### Sensitive Data & Logging *(ASVS V8)*
+#### Sensitive Data & Logging *(ASVS V16, V14 — Data Protection)*
 
 - Structured logging output. Never log request bodies, auth tokens, or PII.
 - Django: `DEBUG = False` in production — `DEBUG = True` exposes SQL queries and stack traces.
@@ -237,7 +237,7 @@ Validate URL scheme (allow only `https`), resolve hostname, block private IP ran
 
 ### TYPESCRIPT / NODE.JS (Express / NestJS / Next.js API Routes)
 
-#### Injection *(ASVS V5.3)*
+#### Injection *(ASVS V1.2 — Injection Prevention)*
 
 - **SQL**: Parameterized queries (`pg`, `mysql2`) or ORM (Prisma, TypeORM) with parameter binding. Never template literals in SQL.
 - **NoSQL injection** (MongoDB): Validate query inputs are strings, not objects. Use Mongoose schema types. Never spread user input into a query object:
@@ -248,7 +248,7 @@ Validate URL scheme (allow only `https`), resolve hostname, block private IP ran
 - **Command injection**: Never pass user input to `child_process.exec()`. Use `execFile()` with an argument array.
 - **Prototype pollution**: Never `merge(target, userInput)` without schema validation. Use `Object.create(null)` for accumulator objects. Validate with Zod/Joi before object spreading.
 
-#### Authentication & Authorization *(ASVS V6, V7)*
+#### Authentication & Authorization *(ASVS V6 — Authentication, V8 — Authorization)*
 
 - Use `passport.js` or `express-jwt` — never manual token parsing in middleware.
 - NestJS: `@UseGuards(JwtAuthGuard)` + `@Roles()` with `RolesGuard`. Never check roles in the service layer.
@@ -266,7 +266,7 @@ const payload = jwt.verify(token, publicKey, {
 ```
 Never use `jwt.decode()` (no verification) for auth decisions. Store refresh tokens in `HttpOnly; Secure; SameSite=Strict` cookies, not `localStorage`.
 
-#### HTTP Security Headers *(ASVS V11.7)*
+#### HTTP Security Headers *(ASVS V3.4 — Browser Security Mechanism Headers)*
 
 ```typescript
 // SECURITY: Helmet sets 11 security headers including CSP, HSTS, X-Frame-Options
@@ -289,11 +289,11 @@ app.use(cors({
 }));
 ```
 
-#### Input Validation *(ASVS V5.1)*
+#### Input Validation *(ASVS V2.2 — Input Validation)*
 
 Validate all request inputs at the boundary with **Zod** or **class-validator** before touching them. Never use `any` for incoming request bodies.
 
-#### SSRF *(ASVS V12.6)*
+#### SSRF *(ASVS V1.3.6 — Sanitization)*
 
 ```typescript
 // SECURITY: Blocking SSRF via private IP resolution check
@@ -301,7 +301,7 @@ const { address } = await dns.promises.lookup(hostname);
 if (isPrivateIP(address)) throw new ForbiddenError('SSRF attempt blocked');
 ```
 
-#### Logging *(ASVS V8)*
+#### Logging *(ASVS V16 — Security Logging and Error Handling)*
 
 `winston` or `pino` with structured JSON output. Never log `req.body` wholesale — pick safe fields explicitly. Redact: `Authorization`, `password`, `token`, `cookie`.
 
@@ -311,7 +311,7 @@ if (isPrivateIP(address)) throw new ForbiddenError('SSRF attempt blocked');
 
 ### REACT (CRA / Vite / Next.js)
 
-#### XSS *(ASVS V5.2)*
+#### XSS *(ASVS V1.2, V3.2 — Unintended Content Interpretation)*
 
 Never use `dangerouslySetInnerHTML` unless the content has been sanitized with DOMPurify:
 ```tsx
@@ -321,7 +321,7 @@ import DOMPurify from 'dompurify';
 ```
 Never construct an anchor `href` from user input without validating the scheme (`javascript:` XSS). Avoid `eval()`, `new Function()`, and `setTimeout(string)`.
 
-#### Secrets & Sensitive Data *(ASVS V8.3)*
+#### Secrets & Sensitive Data *(ASVS V14.3 — Client-side Data Protection)*
 
 - **No secrets in the React bundle.** `REACT_APP_*`/`VITE_*` env vars are embedded in the client build — they are public. Never put API keys, signing secrets, or internal URLs here.
 - Do not store tokens, PII, or sensitive session data in `localStorage`/`sessionStorage` (XSS-accessible). Use `HttpOnly` cookies set by the server.
@@ -349,7 +349,7 @@ Always include CSRF tokens for state-mutating requests if using cookie-based aut
 
 ### GO
 
-#### Injection *(ASVS V5.3)*
+#### Injection *(ASVS V1.2 — Injection Prevention)*
 
 - **SQL**: Always `database/sql` with `?` (MySQL) or `$1` (PostgreSQL) placeholders. Never `fmt.Sprintf` into SQL:
   ```go
@@ -366,14 +366,14 @@ Always include CSRF tokens for state-mutating requests if using cookie-based aut
   }
   ```
 
-#### Cryptography *(ASVS V9)*
+#### Cryptography *(ASVS V11 — Cryptography)*
 
 - Passwords: `golang.org/x/crypto/bcrypt` (cost ≥ 12) or `argon2`.
 - Encryption: `crypto/aes` with GCM mode. Never ECB. Random IV via `crypto/rand`.
 - Random: always `crypto/rand` for security-sensitive randomness. Never `math/rand`.
 - TLS: `tls.Config` with `MinVersion: tls.VersionTLS12` and curated cipher suites. Never `InsecureSkipVerify: true` in production.
 
-#### HTTP Security *(ASVS V11.7)*
+#### HTTP Security *(ASVS V3.4 — Browser Security Mechanism Headers)*
 
 ```go
 // SECURITY: Setting all security headers
@@ -383,11 +383,11 @@ w.Header().Set("X-Frame-Options", "DENY")
 w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 ```
 
-#### Authentication & Authorization *(ASVS V6, V7)*
+#### Authentication & Authorization *(ASVS V6 — Authentication, V8 — Authorization)*
 
 JWT: `golang-jwt/jwt` with explicit `SigningMethodRS256`. Validate `Valid()` on claims, plus `exp`, `iss`, `aud`. Apply auth middleware at the router level, not inline in handlers. Never pass user-controlled data into `context` with a string key — use typed context keys.
 
-#### SSRF *(ASVS V12.6)*
+#### SSRF *(ASVS V1.3.6 — Sanitization)*
 
 ```go
 // SECURITY: SSRF prevention — validate URL before dialing
@@ -400,7 +400,7 @@ parsed, err := url.Parse(target)
 
 Protect shared state with `sync.Mutex` or channels. Never access maps concurrently without synchronization. Use `sync/atomic` for counters. Race detector (`go test -race`) must pass in CI.
 
-#### Logging *(ASVS V8)*
+#### Logging *(ASVS V16 — Security Logging and Error Handling)*
 
 `log/slog` (Go 1.21+) or zap/zerolog. Never log tokens, passwords, PII, full request bodies. Sanitize user input before logging.
 
@@ -418,7 +418,7 @@ Protect shared state with `sync.Mutex` or channels. Never access maps concurrent
 - **Input validation**: Validate all input scalars — never trust the GraphQL type system alone to prevent injection.
 - **Error handling**: Never expose resolver stack traces in production GraphQL errors.
 
-## API SECURITY (all languages) *(OWASP API Security Top 10, ASVS V4/V13)*
+## API SECURITY (all languages) *(OWASP API Security Top 10, ASVS V4 — API and Web Service)*
 
 - **Rate limiting**: Every public endpoint. Token bucket or sliding window. Return `429` with `Retry-After`.
 - **Authentication**: Every non-public endpoint requires a valid, verified token/session. No "optional auth" patterns.
@@ -428,13 +428,13 @@ Protect shared state with `sync.Mutex` or channels. Never access maps concurrent
 - **Versioning security**: Old API versions must have the same security controls as new ones — or be decommissioned.
 - **Sensitive data in URLs**: Never put tokens, passwords, or PII in query parameters (server logs, browser history).
 
-## INFRASTRUCTURE & DEPENDENCY RULES *(SSDF PO/PS, ASVS V14)*
+## INFRASTRUCTURE & DEPENDENCY RULES *(SSDF PO/PS, ASVS V15.2 — Security Architecture and Dependencies)*
 
-### Secrets Management *(ASVS V6.4)*
+### Secrets Management *(ASVS V13.3 — Secret Management)*
 
 Never commit secrets to source control — `.env` files, config with inline credentials, test fixtures with real credentials all included. Detect and reject: `password =`, `api_key =`, `secret =`, `token =`, `private_key` assigned to a non-placeholder string literal. Use AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager, Azure Key Vault, or CI/CD environment injection.
 
-### Docker *(ASVS V14, CIS Docker Benchmark)*
+### Docker *(ASVS V15.2, CIS Docker Benchmark)*
 
 ```dockerfile
 # SECURITY: Running as non-root user
@@ -447,7 +447,7 @@ Never `latest` tag for base images in production — pin a digest. Minimize atta
 
 Flag any dependency with a known CRITICAL/HIGH CVE — do not add or upgrade to it. Prefer well-maintained packages with recent commits and security policies. Audit transitive dependencies, not just direct ones. Lock file must be committed and up to date.
 
-## LOGGING & MONITORING STANDARDS *(ASVS V8, NIST SSDF RV.1)*
+## LOGGING & MONITORING STANDARDS *(ASVS V16 — Security Logging and Error Handling, NIST SSDF RV.1)*
 
 **Log these (always):**
 - Authentication events: login success, login failure (without reason detail to the user), logout, token refresh
