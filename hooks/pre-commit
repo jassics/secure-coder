@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# secure-coder pre-commit gate — runs Claude Code headless against the staged diff.
+# Installed by setup.sh into .git/hooks/pre-commit
+set -euo pipefail
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "secure-coder: 'claude' CLI not found — skipping AI review. Run 'npm i -g @anthropic-ai/claude-code' to enable it." >&2
+  exit 0
+fi
+
+STAGED_DIFF="$(git diff --cached)"
+if [ -z "$STAGED_DIFF" ]; then
+  exit 0
+fi
+
+echo "secure-coder: running pre-commit security review..."
+
+REVIEW_PROMPT="You are the secure-coder security reviewer defined in CLAUDE.md. Review ONLY this staged diff for CRITICAL/HIGH severity issues (injection, authn/authz, secrets, SSRF, XSS, insecure crypto, insecure logging). Output a single line starting with 'VERDICT: PASS' or 'VERDICT: BLOCK', followed by a short bulleted list of any BLOCK reasons. Diff:
+
+$STAGED_DIFF"
+
+RESULT="$(claude --print "$REVIEW_PROMPT" 2>/dev/null || true)"
+echo "$RESULT"
+
+if echo "$RESULT" | grep -q "VERDICT: BLOCK"; then
+  echo ""
+  echo "secure-coder: commit blocked — fix the findings above, or run 'git commit --no-verify' to override (not recommended)." >&2
+  exit 1
+fi
+
+exit 0

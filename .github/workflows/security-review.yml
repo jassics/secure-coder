@@ -1,0 +1,59 @@
+name: secure-coder security review
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  security-review:
+    if: "!contains(github.event.pull_request.labels.*.name, 'security-review-skip')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Get PR diff
+        run: git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+
+      - name: Run security review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          RESULT=$(claude --print "$(cat CLAUDE.md)
+
+          Review the following PR diff for CRITICAL/HIGH severity security issues per the rules above. Output findings as a markdown table (File, Severity, Rule, Fix), then a final line 'VERDICT: PASS' or 'VERDICT: BLOCK'.
+
+          Diff:
+          $(cat pr.diff)")
+          echo "$RESULT" > review.md
+          echo "$RESULT"
+          if grep -q "VERDICT: BLOCK" review.md; then
+            echo "blocked=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Post review comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('review.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## secure-coder review\n\n${body}`
+            });
+
+      - name: Fail on blocking findings
+        if: env.blocked == 'true'
+        run: |
+          echo "Blocking security findings — see PR comment. Add label 'security-review-skip' to override with justification."
+          exit 1

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git diff --cached --quiet && git diff --quiet || echo 'Reminder: run /security-review before committing these changes.'"
+          }
+        ]
+      }
+    ]
+  }
+}
