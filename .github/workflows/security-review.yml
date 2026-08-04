@@ -17,13 +17,44 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check for ANTHROPIC_API_KEY
+        id: key-check
+        env:
+          KEY_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: echo "present=$KEY_PRESENT" >> "$GITHUB_OUTPUT"
+
+      - name: Skip notice (no API key configured)
+        if: steps.key-check.outputs.present != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                '## secure-coder review — skipped',
+                '',
+                'No `ANTHROPIC_API_KEY` repo secret is configured, so the automated PR review did not run.',
+                'This is optional — `secure-coder` still protects this repo via the local `.git/hooks/pre-commit`',
+                'gate (uses the contributor\'s own already-authenticated `claude` CLI, no key needed) and the',
+                'always-on `CLAUDE.md` persona in every Claude Code session.',
+                '',
+                'To also enable this CI-level gate: add `ANTHROPIC_API_KEY` under',
+                '**Settings > Secrets and variables > Actions**.'
+              ].join('\n')
+            });
+
       - name: Install Claude Code CLI
+        if: steps.key-check.outputs.present == 'true'
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Get PR diff
+        if: steps.key-check.outputs.present == 'true'
         run: git diff origin/${{ github.base_ref }}...HEAD > pr.diff
 
       - name: Run security review
+        if: steps.key-check.outputs.present == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -40,6 +71,7 @@ jobs:
           fi
 
       - name: Post review comment
+        if: steps.key-check.outputs.present == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -53,7 +85,7 @@ jobs:
             });
 
       - name: Fail on blocking findings
-        if: env.blocked == 'true'
+        if: steps.key-check.outputs.present == 'true' && env.blocked == 'true'
         run: |
           echo "Blocking security findings — see PR comment. Add label 'security-review-skip' to override with justification."
           exit 1

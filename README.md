@@ -11,7 +11,7 @@ Covers: injection (SQLi, command, XXE, SSTI), broken authn/authz, insecure JWT, 
 | Always-on persona | `CLAUDE.md` | Auto-loaded by Claude Code every session. The agent runs a mandatory context-bootstrap phase (detects auth model, DB layer, trust boundaries, asks clarifying questions), then applies the matching language security profile to everything it writes. |
 | Interactive review | `.claude/commands/security-review.md` | `/security-review` — reviews the current diff on demand, mid-session, and can fix findings inline. |
 | Local commit gate | `hooks/pre-commit` | Installed as `.git/hooks/pre-commit`. Runs `claude --print` headlessly against the staged diff before every commit; blocks on CRITICAL/HIGH findings. |
-| PR gate | `.github/workflows/security-review.yml` | Runs the same review server-side on every PR, posts findings as a comment, fails the check on blocking findings. Can't be bypassed with `--no-verify` since it runs in CI. |
+| PR gate (optional) | `.github/workflows/security-review.yml` | Runs the same review server-side on every PR, posts findings as a comment, fails the check on blocking findings. Can't be bypassed with `--no-verify` since it runs in CI. **Requires an `ANTHROPIC_API_KEY` repo secret** — if none is set, the job posts a one-line skip notice and passes, so adopting this repo never forces a team to buy an API key just to get the local persona and pre-commit gate working. |
 | Any other agent | `prompts/system-prompt.md` | Same content as `CLAUDE.md`, for pasting into Cursor/Copilot/Windsurf custom instructions or a raw API system prompt. |
 
 ## Install
@@ -22,7 +22,7 @@ cd ~/your-project
 ~/tools/secure-coder/setup.sh
 ```
 
-Then add `ANTHROPIC_API_KEY` to your repo's GitHub Actions secrets (for the PR gate), and commit the installed files.
+The always-on persona and local pre-commit gate work immediately — no API key needed, they use your own logged-in `claude` CLI. Optionally, add `ANTHROPIC_API_KEY` to your repo's GitHub Actions secrets to also enable the CI-level PR gate; without it, that job just posts a skip notice. Commit the installed files either way.
 
 If you're not using Claude Code, skip `setup.sh` and just paste `prompts/system-prompt.md` into your tool's custom-instructions field.
 
