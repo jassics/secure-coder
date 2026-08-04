@@ -1,23 +1,63 @@
 #!/usr/bin/env bash
-# secure-coder pre-commit gate — runs Claude Code headless against the staged diff.
+# secure-coder pre-commit gate — deterministic scanners + Claude Code headless review of the staged diff.
 # Installed by setup.sh into .git/hooks/pre-commit
 set -euo pipefail
 
-if ! command -v claude >/dev/null 2>&1; then
-  echo "secure-coder: 'claude' CLI not found — skipping AI review. Run 'npm i -g @anthropic-ai/claude-code' to enable it." >&2
-  exit 0
-fi
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+PROMPT_TEMPLATE="$REPO_ROOT/prompts/PRE_COMMIT_REVIEW_PROMPT.md"
 
 STAGED_DIFF="$(git diff --cached)"
 if [ -z "$STAGED_DIFF" ]; then
   exit 0
 fi
 
+STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACM)"
+
+# --- Deterministic backstop: secret and SAST scanners, independent of LLM judgment ---
+# These block on real findings even if the AI review below is skipped, wrong, or unavailable.
+
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "secure-coder: running gitleaks secret scan (deterministic)..."
+  if ! gitleaks protect --staged --no-banner --redact; then
+    echo "" >&2
+    echo "secure-coder: commit blocked — gitleaks detected a likely secret in the staged diff." >&2
+    echo "Fix: remove it, rotate it if already exposed, and use env vars / a secret manager. Override: git commit --no-verify (not recommended)." >&2
+    exit 1
+  fi
+else
+  echo "secure-coder: gitleaks not found — skipping deterministic secret scan (install: https://github.com/gitleaks/gitleaks)." >&2
+fi
+
+if command -v semgrep >/dev/null 2>&1 && [ -n "$STAGED_FILES" ]; then
+  echo "secure-coder: running semgrep SAST scan (deterministic)..."
+  # shellcheck disable=SC2086
+  if ! SEMGREP_OUT="$(semgrep --config p/owasp-top-ten --config p/secrets --error --quiet $STAGED_FILES 2>&1)"; then
+    echo "$SEMGREP_OUT"
+    echo "" >&2
+    echo "secure-coder: commit blocked — semgrep found high-confidence security findings." >&2
+    echo "Fix the findings above, or override with git commit --no-verify (not recommended)." >&2
+    exit 1
+  fi
+else
+  command -v semgrep >/dev/null 2>&1 || echo "secure-coder: semgrep not found — skipping deterministic SAST scan (install: pip install semgrep)." >&2
+fi
+
+# --- AI review layer: catches business-logic and design-level issues the scanners above can't ---
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "secure-coder: 'claude' CLI not found — skipping AI review. Run 'npm i -g @anthropic-ai/claude-code' to enable it." >&2
+  exit 0
+fi
+
+if [ ! -f "$PROMPT_TEMPLATE" ]; then
+  echo "secure-coder: prompt template missing at $PROMPT_TEMPLATE — skipping AI review." >&2
+  exit 0
+fi
+
 echo "secure-coder: running pre-commit security review..."
 
-REVIEW_PROMPT="You are the secure-coder security reviewer defined in CLAUDE.md. Review ONLY this staged diff for CRITICAL/HIGH severity issues (injection, authn/authz, secrets, SSRF, XSS, insecure crypto, insecure logging). Output a single line starting with 'VERDICT: PASS' or 'VERDICT: BLOCK', followed by a short bulleted list of any BLOCK reasons. Diff:
-
-$STAGED_DIFF"
+REVIEW_PROMPT="$(cat "$PROMPT_TEMPLATE")"
+REVIEW_PROMPT="${REVIEW_PROMPT/\{\{DIFF\}\}/$STAGED_DIFF}"
 
 RESULT="$(claude --print "$REVIEW_PROMPT" 2>/dev/null || true)"
 echo "$RESULT"

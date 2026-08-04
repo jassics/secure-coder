@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+
+# Secrets / local env
+.env
+.env.*
+
+# Scratch files written by the pre-commit hooks and CI workflow
+pr.diff
+review.md
+review_prompt.txt
+changed.txt
+
+# OS / editor
+.DS_Store
+*.swp

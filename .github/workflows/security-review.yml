@@ -17,6 +17,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      # --- Deterministic backstop: runs unconditionally, no ANTHROPIC_API_KEY needed. ---
+      # Fails the check hard on real findings even if the AI review below is skipped/unavailable.
+
+      - name: Deterministic secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_LICENSE: ""
+
+      - name: Deterministic SAST scan (semgrep)
+        run: |
+          pip install --quiet semgrep
+          git diff --name-only --diff-filter=ACM "origin/${{ github.base_ref }}...HEAD" > changed.txt
+          if [ -s changed.txt ]; then
+            semgrep --config p/owasp-top-ten --config p/secrets --error --quiet $(cat changed.txt)
+          fi
+
+      # --- AI review layer: catches business-logic and design-level issues the scanners above can't. ---
+
       - name: Check for ANTHROPIC_API_KEY
         id: key-check
         env:
@@ -33,14 +51,14 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: [
-                '## secure-coder review — skipped',
+                '## secure-coder review — AI layer skipped',
                 '',
-                'No `ANTHROPIC_API_KEY` repo secret is configured, so the automated PR review did not run.',
-                'This is optional — `secure-coder` still protects this repo via the local `.git/hooks/pre-commit`',
-                'gate (uses the contributor\'s own already-authenticated `claude` CLI, no key needed) and the',
-                'always-on `CLAUDE.md` persona in every Claude Code session.',
+                'No `ANTHROPIC_API_KEY` repo secret is configured, so the AI-based PR review did not run.',
+                'The deterministic gitleaks/semgrep scans above still ran and would have failed this check on',
+                'real findings. `secure-coder` also protects this repo via the local `.git/hooks/pre-commit`',
+                'gate and the always-on `CLAUDE.md` persona in every Claude Code session.',
                 '',
-                'To also enable this CI-level gate: add `ANTHROPIC_API_KEY` under',
+                'To also enable the AI-level gate: add `ANTHROPIC_API_KEY` under',
                 '**Settings > Secrets and variables > Actions**.'
               ].join('\n')
             });
@@ -51,19 +69,22 @@ jobs:
 
       - name: Get PR diff
         if: steps.key-check.outputs.present == 'true'
-        run: git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+        run: git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
 
       - name: Run security review
         if: steps.key-check.outputs.present == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          template = Path("prompts/PRE_COMMIT_REVIEW_PROMPT.md").read_text()
+          diff = Path("pr.diff").read_text()
+          Path("review_prompt.txt").write_text(template.replace("{{DIFF}}", diff))
+          PYEOF
           RESULT=$(claude --print "$(cat CLAUDE.md)
 
-          Review the following PR diff for CRITICAL/HIGH severity security issues per the rules above. Output findings as a markdown table (File, Severity, Rule, Fix), then a final line 'VERDICT: PASS' or 'VERDICT: BLOCK'.
-
-          Diff:
-          $(cat pr.diff)")
+          $(cat review_prompt.txt)")
           echo "$RESULT" > review.md
           echo "$RESULT"
           if grep -q "VERDICT: BLOCK" review.md; then
@@ -84,7 +105,7 @@ jobs:
               body: `## secure-coder review\n\n${body}`
             });
 
-      - name: Fail on blocking findings
+      - name: Fail on blocking AI findings
         if: steps.key-check.outputs.present == 'true' && env.blocked == 'true'
         run: |
           echo "Blocking security findings — see PR comment. Add label 'security-review-skip' to override with justification."
