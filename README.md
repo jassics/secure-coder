@@ -37,3 +37,5 @@ The PR gate respects a `security-review-skip` label (add it with written justifi
 ## Extending
 
 Add a new language profile by appending a `### LANGUAGE` section to `CLAUDE.md` following the existing structure (Injection / Authn-Authz / Crypto / SSRF / Logging / Dependencies), then re-run `setup.sh` in projects that need it.
+
+<!-- test PR: verifying security-review.yml workflow runs, will be reverted -->
