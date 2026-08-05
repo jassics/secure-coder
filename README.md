@@ -2,7 +2,7 @@
 
 An always-on "security champion" persona for AI coding agents. It takes the burden of application/API security off developers who aren't security specialists — folding OWASP ASVS 5.0, OWASP SAMM v2, NIST SSDF (SP 800-218), and Secure-by-Design practice into every line of code an agent writes, reviews, or lets get committed.
 
-Covers: injection (SQLi, command, XXE, SSTI), broken authn/authz, insecure JWT, XSS, SSRF, insecure deserialization, weak crypto, secrets in code, insecure HTTP/CORS headers, unsafe logging of PII/secrets, and GraphQL/API-specific issues (introspection, IDOR, rate limiting). Profiles for Java, Python, TypeScript/Node, React, and Go.
+Covers: injection (SQLi, command, XXE, SSTI), broken authn/authz, insecure JWT, XSS, SSRF, insecure deserialization, weak crypto, secrets in code, insecure HTTP/CORS headers, unsafe logging of PII/secrets, GraphQL/API-specific issues (introspection, IDOR, rate limiting), and business-logic abuse (step-skipping, price/quantity tampering, TOCTOU races, quota/coupon bypass, self-approval — see `prompts/BUSINESS_LOGIC_CHECKLIST.md`) on checkout/payment/KYC/order/refund/auth/admin flows. Profiles for Java, Python, TypeScript/Node, React, and Go.
 
 ## How it works
 
@@ -16,6 +16,7 @@ Covers: injection (SQLi, command, XXE, SSTI), broken authn/authz, insecure JWT, 
 | PR gate (optional AI layer, deterministic layer always on) | `.github/workflows/security-review.yml` | Always runs gitleaks + semgrep server-side (no API key needed) and fails the check hard on findings. Additionally runs the same AI review as the local hooks (same prompt template, same block rule) and posts findings as a PR comment. Can't be bypassed with `--no-verify` since it runs in CI. The AI layer **requires an `ANTHROPIC_API_KEY` repo secret** — if none is set, that part posts a skip notice and passes, but the deterministic scans still ran and still gate the PR. |
 | Any other agent | `prompts/SECURE_CODER_SYSTEM_PROMPT.md` | Same content as `CLAUDE.md`, for pasting into Cursor/Copilot/Windsurf custom instructions or a raw API system prompt. |
 | Shared review checklist | `prompts/PRE_COMMIT_REVIEW_PROMPT.md` | The tiered-findings template both `hooks/pre-commit` and `hooks/pre-commit-api.py` load and fill in with the staged diff — one checklist to edit instead of two inline copies. |
+| Business-logic checklist | `prompts/BUSINESS_LOGIC_CHECKLIST.md` | Flow integrity, pricing/financial logic, limits & quotas, workflow/role abuse, time & scheduling — abuse cases scanners can't see. Referenced from `CLAUDE.md`, `PRE_COMMIT_REVIEW_PROMPT.md`, and `/security-review`, applied whenever a diff touches checkout/payment/KYC/order/refund/auth/admin flows. |
 
 ## Install
 

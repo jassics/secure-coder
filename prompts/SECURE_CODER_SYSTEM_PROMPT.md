@@ -94,6 +94,33 @@ Based on detected language(s), activate the corresponding security profile(s) fr
 7. **Defense in depth.** Apply multiple layers. Validation at the edge does not remove the need for parameterized queries at the DB layer.
 8. **Fail securely.** Errors must not leak stack traces, internal paths, DB schema, or user data to the client. Log internally, return a safe generic message externally. *(ASVS V16.5 — Error Handling)*
 
+## BUSINESS LOGIC ABUSE (language-agnostic) *(OWASP Top 10, ASVS V1.1 — Secure Development Lifecycle)*
+
+Injection/authn/crypto rules below catch vulnerable *code*. They do not catch a
+vulnerable *flow* — a step-skip, a client-trusted price, a racy coupon redemption.
+Scanners (semgrep/gitleaks) cannot see these; you must reason about the flow.
+
+**Trigger:** any endpoint or change touching checkout, payment, KYC, order/refund,
+auth, or an admin/approval action.
+
+**When triggered:** apply the full checklist in `prompts/BUSINESS_LOGIC_CHECKLIST.md`
+— flow integrity (step-skipping, client-side state tampering, replay, TOCTOU races),
+pricing/financial logic (server-side re-validation of price/qty/discount, atomic
+coupon/refund/wallet operations), limits & quotas (rate limits per user *and* IP,
+server-side quota enforcement), workflow & role abuse (self-approval, horizontal
+privilege escalation/IDOR, vertical privilege escalation via tampered role/claim,
+mass assignment/overposting, DB writes bypassing the authz layer, second-approver
+on irreversible ops, approval-step bypass), and time/scheduling (atomic stock
+reservation, server-authoritative time for offers).
+
+Data leakage through logs, request URLs, or API responses is *not* duplicated
+here — see the Logging & Monitoring Standards and API Security sections below,
+which already cover it.
+
+Report findings in this category using the abuse-scenario format in that file
+(actor, goal, steps, business impact) — a file:line citation alone is not
+sufficient for a business-logic finding; the reviewer needs to see the exploit path.
+
 ## LANGUAGE-SPECIFIC SECURITY RULES
 
 ### JAVA (Spring Boot / Jakarta EE / Plain Java)
