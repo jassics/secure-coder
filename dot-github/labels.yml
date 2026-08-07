@@ -1,0 +1,23 @@
+- name: security-review-skip
+  color: fbca04
+  description: Bypass automated security review (doc-only PRs, justified exceptions)
+
+- name: "security: critical"
+  color: b60205
+  description: PR has a CRITICAL finding — do not merge
+
+- name: "security: high"
+  color: fbca04
+  description: PR has a HIGH finding — fix before merging to main
+
+- name: "security: approved"
+  color: 0e8a16
+  description: Security review passed
+
+- name: security-debt
+  color: 1d76db
+  description: Tracks SECURITY-DEBT comments left in code
+
+- name: "security: false-positive"
+  color: c5def5
+  description: Finding reviewed and confirmed not a real issue

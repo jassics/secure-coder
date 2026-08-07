@@ -1,88 +1,202 @@
 #!/usr/bin/env bash
-# Installs secure-coder into the target project (run from inside the target repo).
+# =============================================================================
+# Security Champion — Setup Script
+# Installs the security champion system into your project.
+#
+# Usage:
+#   ./setup.sh                   # Interactive install
+#   ./setup.sh --claude-code     # Claude Code CLI mode (pre-commit hook)
+#   ./setup.sh --api             # Anthropic API mode (pre-commit hook)
+#   ./setup.sh --prompt-only     # Copy CLAUDE.md only (no hook)
+# =============================================================================
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET_DIR="$(pwd)"
+TARGET_REPO="${2:-$(pwd)}"
 
-if [ ! -d "$TARGET_DIR/.git" ]; then
-  echo "Run this from the root of a git repository." >&2
-  exit 1
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo ""
+echo "🔐 Security Champion Setup"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Detect if we're inside a git repo
+if ! git -C "$TARGET_REPO" rev-parse --git-dir &>/dev/null; then
+    echo -e "${RED}❌ Not inside a git repository. Run from your project root.${NC}"
+    exit 1
 fi
 
-echo "Installing secure-coder into $TARGET_DIR"
+GIT_ROOT=$(git -C "$TARGET_REPO" rev-parse --show-toplevel)
+echo "📁 Target repo: $GIT_ROOT"
+echo ""
 
-# 1. Always-on persona
-if [ -f "$TARGET_DIR/CLAUDE.md" ]; then
-  echo "CLAUDE.md already exists — appending secure-coder rules instead of overwriting."
-  {
+MODE="${1:-}"
+
+if [[ -z "$MODE" ]]; then
+    echo "Which setup mode?"
+    echo "  1) Claude Code CLI  — uses \`claude\` CLI for pre-commit (recommended)"
+    echo "  2) Anthropic API    — uses API key directly (no Claude Code required)"
+    echo "  3) Prompt only      — copy CLAUDE.md only, no pre-commit hook"
     echo ""
-    echo "---"
-    echo ""
-    cat "$SCRIPT_DIR/CLAUDE.md"
-  } >> "$TARGET_DIR/CLAUDE.md"
+    read -rp "Enter choice [1/2/3]: " CHOICE
+    case "$CHOICE" in
+        1) MODE="--claude-code" ;;
+        2) MODE="--api" ;;
+        3) MODE="--prompt-only" ;;
+        *) echo -e "${RED}Invalid choice${NC}"; exit 1 ;;
+    esac
+fi
+
+# ─── Step 1: Copy CLAUDE.md ───────────────────────────────────────────────────
+echo -e "${BLUE}[1/4] Installing CLAUDE.md (always-on secure coder)...${NC}"
+
+if [[ -f "$GIT_ROOT/CLAUDE.md" ]]; then
+    echo -e "${YELLOW}      CLAUDE.md already exists. Merging security champion section...${NC}"
+    # Append if the security champion header isn't already present
+    if ! grep -q "Security Champion" "$GIT_ROOT/CLAUDE.md"; then
+        echo "" >> "$GIT_ROOT/CLAUDE.md"
+        echo "---" >> "$GIT_ROOT/CLAUDE.md"
+        cat "$SCRIPT_DIR/CLAUDE.md" >> "$GIT_ROOT/CLAUDE.md"
+        echo -e "${GREEN}      ✓ Appended to existing CLAUDE.md${NC}"
+    else
+        echo -e "${YELLOW}      ⚠ Security Champion already present in CLAUDE.md. Skipping.${NC}"
+    fi
 else
-  cp "$SCRIPT_DIR/CLAUDE.md" "$TARGET_DIR/CLAUDE.md"
+    cp "$SCRIPT_DIR/CLAUDE.md" "$GIT_ROOT/CLAUDE.md"
+    echo -e "${GREEN}      ✓ CLAUDE.md installed${NC}"
 fi
 
-# 2. Slash command
-mkdir -p "$TARGET_DIR/.claude/commands"
-cp "$SCRIPT_DIR/.claude/commands/security-review.md" "$TARGET_DIR/.claude/commands/security-review.md"
+# ─── Step 2: Install slash command ────────────────────────────────────────────
+echo -e "${BLUE}[2/4] Installing /security-review slash command...${NC}"
 
-# 3. Claude Code settings (Stop hook reminder) — merge if settings.json already exists
-if [ -f "$TARGET_DIR/.claude/settings.json" ]; then
-  echo "$TARGET_DIR/.claude/settings.json already exists — merge the Stop hook from $SCRIPT_DIR/.claude/settings.json manually."
+mkdir -p "$GIT_ROOT/.claude/commands"
+cp "$SCRIPT_DIR/dot-claude/commands/security-review.md" \
+   "$GIT_ROOT/.claude/commands/security-review.md"
+echo -e "${GREEN}      ✓ .claude/commands/security-review.md installed${NC}"
+echo "      Usage in Claude Code: /security-review"
+
+# ─── Step 3: Install pre-commit hook ──────────────────────────────────────────
+if [[ "$MODE" != "--prompt-only" ]]; then
+    echo -e "${BLUE}[3/4] Installing pre-commit hook...${NC}"
+
+    HOOKS_DIR="$GIT_ROOT/.git/hooks"
+    mkdir -p "$HOOKS_DIR"
+
+    if [[ -f "$HOOKS_DIR/pre-commit" ]]; then
+        echo -e "${YELLOW}      Existing pre-commit hook found. Backing up to pre-commit.bak${NC}"
+        cp "$HOOKS_DIR/pre-commit" "$HOOKS_DIR/pre-commit.bak"
+    fi
+
+    if [[ "$MODE" == "--claude-code" ]]; then
+        cp "$SCRIPT_DIR/hooks/pre-commit" "$HOOKS_DIR/pre-commit"
+        chmod +x "$HOOKS_DIR/pre-commit"
+        echo -e "${GREEN}      ✓ pre-commit hook installed (Claude Code CLI mode)${NC}"
+
+        # Verify claude CLI is available
+        if ! command -v claude &>/dev/null; then
+            echo -e "${YELLOW}      ⚠ Warning: 'claude' CLI not found in PATH.${NC}"
+            echo "        Install Claude Code: https://claude.ai/code"
+        else
+            echo -e "${GREEN}      ✓ claude CLI detected: $(which claude)${NC}"
+        fi
+
+    elif [[ "$MODE" == "--api" ]]; then
+        cp "$SCRIPT_DIR/hooks/pre-commit-api.py" "$HOOKS_DIR/pre-commit"
+        chmod +x "$HOOKS_DIR/pre-commit"
+        echo -e "${GREEN}      ✓ pre-commit hook installed (API mode)${NC}"
+
+        if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+            echo -e "${YELLOW}      ⚠ ANTHROPIC_API_KEY not set in current shell.${NC}"
+            echo "        Add to your shell profile (~/.bashrc, ~/.zshrc):"
+            echo "        export ANTHROPIC_API_KEY=your_key_here"
+        else
+            echo -e "${GREEN}      ✓ ANTHROPIC_API_KEY detected${NC}"
+        fi
+
+        # Check anthropic package
+        if ! python3 -c "import anthropic" &>/dev/null; then
+            echo -e "${YELLOW}      ⚠ anthropic Python package not installed.${NC}"
+            echo "        Run: pip install anthropic"
+        fi
+    fi
 else
-  cp "$SCRIPT_DIR/.claude/settings.json" "$TARGET_DIR/.claude/settings.json"
+    echo -e "${YELLOW}[3/4] Skipping pre-commit hook (prompt-only mode)${NC}"
 fi
 
-# 4. Standalone prompt files (for non-Claude-Code agents, and shared by both pre-commit hooks)
-mkdir -p "$TARGET_DIR/prompts"
-cp "$SCRIPT_DIR/prompts/SECURE_CODER_SYSTEM_PROMPT.md" "$TARGET_DIR/prompts/SECURE_CODER_SYSTEM_PROMPT.md"
-cp "$SCRIPT_DIR/prompts/PRE_COMMIT_REVIEW_PROMPT.md" "$TARGET_DIR/prompts/PRE_COMMIT_REVIEW_PROMPT.md"
+# ─── Step 4: Add to .gitignore (optional) ─────────────────────────────────────
+echo -e "${BLUE}[4/4] Checking .gitignore...${NC}"
 
-# 5. Local pre-commit git hook — Claude Code CLI by default, or Anthropic API directly if no CLI/login
-mkdir -p "$TARGET_DIR/hooks"
-cp "$SCRIPT_DIR/hooks/pre-commit" "$TARGET_DIR/hooks/pre-commit"
-cp "$SCRIPT_DIR/hooks/pre-commit-api.py" "$TARGET_DIR/hooks/pre-commit-api.py"
-chmod +x "$TARGET_DIR/hooks/pre-commit" "$TARGET_DIR/hooks/pre-commit-api.py"
-
-if command -v claude >/dev/null 2>&1; then
-  cp "$SCRIPT_DIR/hooks/pre-commit" "$TARGET_DIR/.git/hooks/pre-commit"
-  chmod +x "$TARGET_DIR/.git/hooks/pre-commit"
-  HOOK_INSTALLED="hooks/pre-commit (Claude Code CLI)"
+GITIGNORE="$GIT_ROOT/.gitignore"
+if [[ -f "$GITIGNORE" ]]; then
+    # .env should already be there, but make sure
+    if ! grep -q "^\.env$" "$GITIGNORE"; then
+        echo ".env" >> "$GITIGNORE"
+        echo -e "${GREEN}      ✓ Added .env to .gitignore${NC}"
+    else
+        echo "      .env already in .gitignore ✓"
+    fi
+    if ! grep -q "\.pem$\|\.key$\|\.p12$\|\.pfx$" "$GITIGNORE"; then
+        printf "\n# Secret files — managed by Security Champion\n*.pem\n*.key\n*.p12\n*.pfx\n" >> "$GITIGNORE"
+        echo -e "${GREEN}      ✓ Added key file patterns to .gitignore${NC}"
+    fi
 else
-  cp "$SCRIPT_DIR/hooks/pre-commit-api.py" "$TARGET_DIR/.git/hooks/pre-commit"
-  chmod +x "$TARGET_DIR/.git/hooks/pre-commit"
-  HOOK_INSTALLED="hooks/pre-commit-api.py (Anthropic API — 'claude' CLI not found on this machine)"
+    printf ".env\n*.pem\n*.key\n*.p12\n*.pfx\n" > "$GITIGNORE"
+    echo -e "${GREEN}      ✓ Created .gitignore with secret file patterns${NC}"
 fi
 
-# 6. GitHub Actions PR gate
-mkdir -p "$TARGET_DIR/.github/workflows"
-cp "$SCRIPT_DIR/.github/workflows/security-review.yml" "$TARGET_DIR/.github/workflows/security-review.yml"
+# ─── Step 5: Sync GitHub labels (optional) ────────────────────────────────────
+if [[ "$MODE" != "--prompt-only" ]]; then
+    echo -e "${BLUE}[5/5] GitHub labels (optional)...${NC}"
+    LABELS_SRC="$SCRIPT_DIR/dot-github/labels.yml"
+    LABELS_DEST="$GIT_ROOT/.github/labels.yml"
 
-echo ""
-echo "Done. Installed:"
-echo "  - CLAUDE.md                              (always-on secure coder persona)"
-echo "  - .claude/commands/security-review.md     (/security-review slash command)"
-echo "  - .claude/settings.json                   (pre-commit reminder hook)"
-echo "  - prompts/SECURE_CODER_SYSTEM_PROMPT.md   (portable persona, paste into any coding agent)"
-echo "  - prompts/PRE_COMMIT_REVIEW_PROMPT.md     (shared template for both pre-commit hooks)"
-echo "  - hooks/pre-commit + hooks/pre-commit-api.py (both variants copied into the repo)"
-echo "  - .git/hooks/pre-commit                   (active hook: $HOOK_INSTALLED)"
-echo "  - .github/workflows/security-review.yml   (PR gate, needs ANTHROPIC_API_KEY repo secret)"
-echo ""
-echo "Next steps:"
-echo "  1. Add ANTHROPIC_API_KEY to this repo's GitHub secrets (Settings > Secrets and variables > Actions)."
-echo "  2. Commit these files."
-echo "  3. Run 'claude' in this project — the secure coder persona is now always active."
-echo ""
-echo "To switch the active local hook: cp hooks/pre-commit .git/hooks/pre-commit (Claude Code CLI)"
-echo "                              or: cp hooks/pre-commit-api.py .git/hooks/pre-commit (Anthropic API, needs 'pip install anthropic')"
-echo ""
-if ! command -v gitleaks >/dev/null 2>&1 || ! command -v semgrep >/dev/null 2>&1; then
-  echo "Recommended: install the deterministic scanner backstop the pre-commit hooks and CI rely on:"
-  command -v gitleaks >/dev/null 2>&1 || echo "  - gitleaks (secrets): https://github.com/gitleaks/gitleaks"
-  command -v semgrep >/dev/null 2>&1 || echo "  - semgrep (SAST):     pip install semgrep"
-  echo "Without them, the local hooks fall back to AI-only review; CI always installs and runs both."
+    if [[ -f "$LABELS_SRC" ]]; then
+        mkdir -p "$GIT_ROOT/.github"
+        cp "$LABELS_SRC" "$LABELS_DEST"
+        echo -e "${GREEN}      ✓ .github/labels.yml installed${NC}"
+        echo ""
+        echo "      To sync labels to GitHub:"
+        echo "      npx github-label-sync --access-token YOUR_TOKEN \\"
+        echo "        --labels .github/labels.yml YOUR_ORG/YOUR_REPO"
+        echo ""
+        echo "      Labels created:"
+        echo "        security-review-skip    (yellow) bypass automated review"
+        echo "        security: critical      (red)    CRITICAL finding on PR"
+        echo "        security: high          (yellow) HIGH finding on PR"
+        echo "        security: approved      (green)  review passed"
+        echo "        security-debt           (blue)   tracks SECURITY-DEBT comments"
+        echo "        security: false-positive         reviewed, not a real finding"
+    fi
 fi
+
+# ─── Done ──────────────────────────────────────────────────────────────────────
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo -e "${GREEN}✅  Security Champion installed successfully!${NC}"
+echo ""
+echo "What's active:"
+echo "  • CLAUDE.md            → Always-on secure coder (Claude Code reads this automatically)"
+echo "  • /security-review     → Slash command for on-demand reviews"
+if [[ "$MODE" != "--prompt-only" ]]; then
+echo "  • .git/hooks/pre-commit → Automatic review on every git commit"
+echo "  • .github/labels.yml   → GitHub label definitions (sync with github-label-sync)"
+fi
+echo ""
+echo "CI/CD (copy and rename):"
+echo "  dot-github/workflows/security-review.yml  →  .github/workflows/security-review.yml"
+echo "  dot-gitlab-ci.yml                          →  .gitlab-ci.yml"
+echo ""
+echo "Usage:"
+echo "  git add . && git commit -m 'feat: ...'   # Hook runs automatically"
+echo "  /security-review                         # Run on-demand in Claude Code"
+echo "  SKIP_SECURITY_REVIEW=1 git commit ...    # Emergency bypass (use sparingly)"
+echo ""
+echo "Standalone (non-Claude-Code agents):"
+echo "  Copy CLAUDE.md content as your agent's system prompt."
+echo "  Copy prompts/PRE_COMMIT_REVIEW_PROMPT.md and paste with your diff."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -1,0 +1,112 @@
+name: security-champion review
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  security-review:
+    if: "!contains(github.event.pull_request.labels.*.name, 'security-review-skip')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # --- Deterministic backstop: runs unconditionally, no ANTHROPIC_API_KEY needed. ---
+      # Fails the check hard on real findings even if the AI review below is skipped/unavailable.
+
+      - name: Deterministic secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_LICENSE: ""
+
+      - name: Deterministic SAST scan (semgrep)
+        run: |
+          pip install --quiet semgrep
+          git diff --name-only --diff-filter=ACM "origin/${{ github.base_ref }}...HEAD" > changed.txt
+          if [ -s changed.txt ]; then
+            semgrep --config p/owasp-top-ten --config p/secrets --error --quiet $(cat changed.txt)
+          fi
+
+      # --- AI review layer: catches business-logic and design-level issues the scanners above can't. ---
+
+      - name: Check for ANTHROPIC_API_KEY
+        id: key-check
+        env:
+          KEY_PRESENT: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: echo "present=$KEY_PRESENT" >> "$GITHUB_OUTPUT"
+
+      - name: Skip notice (no API key configured)
+        if: steps.key-check.outputs.present != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                '## security-champion review — AI layer skipped',
+                '',
+                'No `ANTHROPIC_API_KEY` repo secret is configured, so the AI-based PR review did not run.',
+                'The deterministic gitleaks/semgrep scans above still ran and would have failed this check on',
+                'real findings. `security-champion` also protects this repo via the local `.git/hooks/pre-commit`',
+                'gate and the always-on `CLAUDE.md` persona in every Claude Code session.',
+                '',
+                'To also enable the AI-level gate: add `ANTHROPIC_API_KEY` under',
+                '**Settings > Secrets and variables > Actions**.'
+              ].join('\n')
+            });
+
+      - name: Install Claude Code CLI
+        if: steps.key-check.outputs.present == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Get PR diff
+        if: steps.key-check.outputs.present == 'true'
+        run: git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
+
+      - name: Run security review
+        if: steps.key-check.outputs.present == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          template = Path("prompts/PRE_COMMIT_REVIEW_PROMPT.md").read_text()
+          diff = Path("pr.diff").read_text()
+          Path("review_prompt.txt").write_text(template.replace("{{DIFF}}", diff))
+          PYEOF
+          RESULT=$(claude --print "$(cat CLAUDE.md)
+
+          $(cat review_prompt.txt)")
+          echo "$RESULT" > review.md
+          echo "$RESULT"
+          if grep -q "VERDICT: BLOCK" review.md; then
+            echo "blocked=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Post review comment
+        if: steps.key-check.outputs.present == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('review.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## security-champion review\n\n${body}`
+            });
+
+      - name: Fail on blocking AI findings
+        if: steps.key-check.outputs.present == 'true' && env.blocked == 'true'
+        run: |
+          echo "Blocking security findings — see PR comment. Add label 'security-review-skip' to override with justification."
+          exit 1

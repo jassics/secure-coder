@@ -1,0 +1,62 @@
+security-champion-review:
+  stage: test
+  image: python:3.12-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+  variables:
+    GIT_DEPTH: 0
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git curl jq >/dev/null
+    - pip install --quiet semgrep
+  script:
+    # --- Deterministic backstop: runs unconditionally, no ANTHROPIC_API_KEY needed. ---
+    - |
+      curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh | bash -s -- -b /usr/local/bin
+      gitleaks detect --source . --redact --exit-code 1
+    - |
+      git diff --name-only --diff-filter=ACM "origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}...HEAD" > changed.txt || true
+      if [ -s changed.txt ]; then
+        semgrep --config p/owasp-top-ten --config p/secrets --error --quiet $(cat changed.txt)
+      fi
+
+    # --- AI review layer: catches business-logic and design-level issues the scanners above can't. ---
+    - |
+      if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+        echo "No ANTHROPIC_API_KEY CI/CD variable configured — skipping AI review layer."
+        echo "Deterministic gitleaks/semgrep scans above still ran and gate this pipeline on real findings."
+        exit 0
+      fi
+      npm install -g @anthropic-ai/claude-code
+      git diff "origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}...HEAD" > mr.diff
+      python3 - <<'PYEOF'
+      from pathlib import Path
+      template = Path("prompts/PRE_COMMIT_REVIEW_PROMPT.md").read_text()
+      diff = Path("mr.diff").read_text()
+      Path("review_prompt.txt").write_text(template.replace("{{DIFF}}", diff))
+      PYEOF
+      RESULT=$(claude --print "$(cat CLAUDE.md)
+
+      $(cat review_prompt.txt)")
+      echo "$RESULT" > review.md
+      echo "$RESULT"
+
+      if [ -n "${GITLAB_TOKEN:-}" ]; then
+        BODY=$(python3 -c "import json,sys; print(json.dumps('## security-champion review\n\n' + open('review.md').read()))")
+        curl --silent --output /dev/null \
+          --request POST \
+          --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+          --header "Content-Type: application/json" \
+          --data "{\"body\": ${BODY}}" \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/merge_requests/${CI_MERGE_REQUEST_IID}/notes"
+      fi
+
+      if grep -q "VERDICT: BLOCK" review.md; then
+        echo "Blocking security findings — see MR note (or review.md artifact). Skip via 'security-review-skip' label with justification."
+        exit 1
+      fi
+  artifacts:
+    when: always
+    paths:
+      - review.md
+    expire_in: 30 days

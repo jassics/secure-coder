@@ -1,43 +1,250 @@
-# secure-coder
+# Security Champion
 
-An always-on "security champion" persona for AI coding agents. It takes the burden of application/API security off developers who aren't security specialists — folding OWASP ASVS 5.0, OWASP SAMM v2, NIST SSDF (SP 800-218), and Secure-by-Design practice into every line of code an agent writes, reviews, or lets get committed.
+> **No insecure code reaches your repository.**
 
-Covers: injection (SQLi, command, XXE, SSTI), broken authn/authz, insecure JWT, XSS, SSRF, insecure deserialization, weak crypto, secrets in code, insecure HTTP/CORS headers, unsafe logging of PII/secrets, GraphQL/API-specific issues (introspection, IDOR, rate limiting), and business-logic abuse (step-skipping, price/quantity tampering, TOCTOU races, quota/coupon bypass, self-approval — see `prompts/BUSINESS_LOGIC_CHECKLIST.md`) on checkout/payment/KYC/order/refund/auth/admin flows. Profiles for Java, Python, TypeScript/Node, React, and Go.
+A portable, agent-agnostic security system for developers. Drop it into any project and your AI coding agent becomes a security-aware pair programmer — with automatic pre-commit blocking on critical vulnerabilities.
 
-## How it works
+Covers Java, Python, TypeScript, React, and Go. Checks for SQLi, XSS, RCE, SSRF, auth/authz flaws, insecure JWT, GraphQL vulnerabilities, insecure headers, secrets in code, CVE-laden dependencies, Docker misconfigs, and logging PII.
 
-| Layer | File | What it does |
-|---|---|---|
-| Always-on persona | `CLAUDE.md` | Auto-loaded by Claude Code every session. The agent runs a mandatory context-bootstrap phase (detects auth model, DB layer, trust boundaries, asks clarifying questions), then applies the matching language security profile to everything it writes. |
-| Interactive review | `.claude/commands/security-review.md` | `/security-review` — reviews the current diff on demand, mid-session, and can fix findings inline. |
-| Deterministic backstop | `gitleaks` + `semgrep` (called from both hooks and CI) | Secret scan and OWASP-ruleset SAST on the staged/PR diff, independent of LLM judgment. Blocks on real findings even if the AI layer is unavailable, skipped, or wrong. Local hooks run these if the binaries are installed (degrade gracefully with a warning if not); CI always installs and runs both. |
-| Local commit gate | `hooks/pre-commit` | Installed as `.git/hooks/pre-commit` when the `claude` CLI is present. Runs the deterministic scans above, then `claude --print` against the staged diff using `prompts/PRE_COMMIT_REVIEW_PROMPT.md`; reports a full CRITICAL→INFO tiered finding list, blocks only on high-confidence CRITICAL (deterministic findings block regardless of confidence). |
-| Local commit gate (no Claude Code CLI) | `hooks/pre-commit-api.py` | Same deterministic scans, same prompt template, same tiering/block rule, but calls the Anthropic API directly (`pip install anthropic` + `ANTHROPIC_API_KEY`) — for machines without the Claude Code CLI installed. `setup.sh` installs this automatically as the active hook if `claude` isn't found. |
-| PR gate (optional AI layer, deterministic layer always on) | `.github/workflows/security-review.yml` | Always runs gitleaks + semgrep server-side (no API key needed) and fails the check hard on findings. Additionally runs the same AI review as the local hooks (same prompt template, same block rule) and posts findings as a PR comment. Can't be bypassed with `--no-verify` since it runs in CI. The AI layer **requires an `ANTHROPIC_API_KEY` repo secret** — if none is set, that part posts a skip notice and passes, but the deterministic scans still ran and still gate the PR. |
-| Any other agent | `prompts/SECURE_CODER_SYSTEM_PROMPT.md` | Same content as `CLAUDE.md`, for pasting into Cursor/Copilot/Windsurf custom instructions or a raw API system prompt. |
-| Shared review checklist | `prompts/PRE_COMMIT_REVIEW_PROMPT.md` | The tiered-findings template both `hooks/pre-commit` and `hooks/pre-commit-api.py` load and fill in with the staged diff — one checklist to edit instead of two inline copies. |
-| Business-logic checklist | `prompts/BUSINESS_LOGIC_CHECKLIST.md` | Flow integrity, pricing/financial logic, limits & quotas, workflow/role abuse, time & scheduling — abuse cases scanners can't see. Referenced from `CLAUDE.md`, `PRE_COMMIT_REVIEW_PROMPT.md`, and `/security-review`, applied whenever a diff touches checkout/payment/KYC/order/refund/auth/admin flows. |
+---
+
+## What it does
+
+### Always-On Secure Coder (`CLAUDE.md`)
+Once installed, your AI agent:
+- Reads the codebase and asks for design docs (PRD, HLD, LLD, DFD) at session start to understand trust boundaries and data sensitivity
+- Writes secure-by-default code in every language — parameterized queries, correct crypto, secure JWT config, proper headers, least-privilege patterns
+- Adds `// SECURITY:` inline comments explaining every security decision
+- Refuses "quick/dirty" shortcuts and explains why
+- Flags security debt it observes in existing code, even when not asked to fix it
+
+### Pre-Commit Reviewer (`/security-review`)
+Before every `git commit`:
+- Reads the staged diff **and** surrounding code context (not just changed lines)
+- Runs a structured checklist for every detected language
+- Produces a tiered findings report: CRITICAL → HIGH → MEDIUM → INFO
+- **Blocks commits** on CRITICAL findings (only when confidence is HIGH)
+- Generates ready-to-file remediation tickets for CRITICAL/HIGH findings
+
+---
 
 ## Install
 
 ```bash
-git clone https://github.com/jassics/secure-coder ~/tools/secure-coder
-cd ~/your-project
-~/tools/secure-coder/setup.sh
+git clone https://github.com/your-org/security-champion
+cd security-champion
+chmod +x setup.sh
+./setup.sh
 ```
 
-The always-on persona and local pre-commit gate work immediately — no API key needed, they use your own logged-in `claude` CLI. Optionally, add `ANTHROPIC_API_KEY` to your repo's GitHub Actions secrets to also enable the CI-level PR gate; without it, that job just posts a skip notice. Commit the installed files either way.
+Choose your mode when prompted:
+- **Claude Code CLI** — uses the `claude` CLI installed with Claude Code (recommended)
+- **Anthropic API** — uses your API key directly, no Claude Code required
+- **Prompt only** — install `CLAUDE.md` and the slash command, skip the hook
 
-If you're not using Claude Code, skip `setup.sh` and just paste `prompts/SECURE_CODER_SYSTEM_PROMPT.md` into your tool's custom-instructions field. If you want the pre-commit gate without the Claude Code CLI, point `.git/hooks/pre-commit` at `hooks/pre-commit-api.py` instead (needs `pip install anthropic` + `ANTHROPIC_API_KEY`).
+Or non-interactively:
+```bash
+./setup.sh --claude-code   # Claude Code mode
+./setup.sh --api           # API mode
+./setup.sh --prompt-only   # No hook
+```
 
-## Why this matters for developers who aren't security specialists
+The script installs into whatever git repo you run it from.
 
-A developer who doesn't know what SSRF or a JWT `alg: none` attack is shouldn't have to become a security engineer to ship safely. `secure-coder` puts that judgment in the agent instead: it asks the questions a security reviewer would ask *before* writing auth/data-handling code, refuses "quick and insecure" requests, explains every security-relevant decision inline (`// SECURITY: ...`), and won't let a commit through with a hardcoded secret, a deterministic SAST hit, or an unresolved high-confidence CRITICAL finding — without the developer needing to know which OWASP category applies or which scanner to run.
+---
 
-## Overriding a block
+## What gets installed
 
-The PR gate respects a `security-review-skip` label (add it with written justification in the PR description — it's an audit trail, not a bypass; the deterministic gitleaks/semgrep scans still ran and are visible in the check history even if the label skips the AI comment). The local git hook respects `git commit --no-verify` (discouraged; it skips both the deterministic scans and the AI review locally, but the PR gate re-runs both server-side).
+```
+your-project/
+├── CLAUDE.md                          ← Always-on secure coder (auto-read by Claude Code)
+├── .claude/
+│   └── commands/
+│       └── security-review.md         ← /security-review slash command
+└── .git/
+    └── hooks/
+        └── pre-commit                 ← Automatic review on git commit
+```
 
-## Extending
+---
 
-Add a new language profile by appending a `### LANGUAGE` section to `CLAUDE.md` following the existing structure (Injection / Authn-Authz / Crypto / SSRF / Logging / Dependencies), then re-run `setup.sh` in projects that need it.
+## Usage
+
+### Automatic (pre-commit hook)
+```bash
+git add src/UserController.java
+git commit -m "feat: add password reset endpoint"
+# → Security review runs automatically
+# → APPROVED / CAUTION / BLOCKED verdict printed
+# → Commit blocked if CRITICAL findings found
+```
+
+### Manual slash command (Claude Code)
+```
+/security-review
+```
+Runs on current staged changes or the last commit.
+
+### Emergency bypass
+```bash
+SKIP_SECURITY_REVIEW=1 git commit -m "hotfix: ..."
+```
+Use sparingly. Every bypass is visible in git history context.
+
+---
+
+## Standalone (non-Claude-Code agents)
+
+Works with any AI coding agent (Cursor, Copilot Chat, ChatGPT, Gemini, etc.):
+
+1. **Always-on coder**: Paste the contents of `CLAUDE.md` as your agent's **system prompt**.
+2. **Pre-commit review**: Paste `prompts/PRE_COMMIT_REVIEW_PROMPT.md` + your `git diff --staged` output as a user message.
+
+---
+
+## Requirements
+
+| Mode | Requirements |
+|------|-------------|
+| Claude Code | `claude` CLI installed, authenticated |
+| API | `pip install anthropic`, `ANTHROPIC_API_KEY` in shell env |
+| Prompt only | Any AI coding agent |
+
+---
+
+## Language Coverage
+
+| Language | Injection | Crypto | AuthN/Z | SSRF | Headers | Logging | Deps |
+|----------|-----------|--------|---------|------|---------|---------|------|
+| Java (Spring) | SQLi, XXE, SSTI, Deserialization | AES-GCM, BCrypt, SecureRandom | Spring Security, CSRF, JWT RS256 | RestTemplate/WebClient | CSP, HSTS, XFO | Logback structured, no PII | OWASP dep-check |
+| Python (Django/Flask/FastAPI) | SQLi, cmdi, SSTI, Pickle, Path traversal | bcrypt/argon2, cryptography lib | @login_required, CSRF, Depends() JWT | requests + allowlist | Django security settings | logging module, no PII | pip-audit |
+| TypeScript/Node | SQLi, NoSQLi, Prototype pollution, cmdi | — | passport/express-jwt, JWT RS256 | fetch + IP check | helmet | pino/winston, redacted fields | npm audit |
+| React | XSS (DOMPurify, href), eval | — | CSRF tokens | — | CSP via server | — | npm audit |
+| Go | SQLi, cmdi, Path traversal | AES-GCM, bcrypt, crypto/rand | golang-jwt RS256, middleware | net/http + IP check | Manual headers | log/slog, no PII | govulncheck |
+| GraphQL | Injection | — | Field-level authz | — | — | Error sanitization | — |
+| Infra | Secrets (regex), Docker, .env | — | — | — | — | — | CVE scan |
+
+---
+
+## Findings Format
+
+```
+[CRITICAL] SQL Injection in UserRepository.java
+File     : src/main/java/com/example/UserRepository.java:47
+Confidence: HIGH
+Category : Injection
+Evidence : String sql = "SELECT * FROM users WHERE email = '" + email + "'";
+Attack   : Attacker passes email='; DROP TABLE users;-- to delete all user data
+Fix      :
+  // SECURITY: Parameterized query prevents SQL injection
+  PreparedStatement stmt = conn.prepareStatement(
+      "SELECT * FROM users WHERE email = ?"
+  );
+  stmt.setString(1, email);
+```
+
+---
+
+## Commit Verdicts
+
+```
+✅  SECURITY REVIEW: APPROVED    → Safe to commit
+⚠️  SECURITY REVIEW: CAUTION    → HIGH findings; fix before merging to main
+🚫  SECURITY REVIEW: BLOCKED    → CRITICAL finding confirmed; must fix before commit
+```
+
+BLOCKED is only issued when the reviewer has confirmed the vulnerability by reading surrounding code context — not just the diff line.
+
+---
+
+## GitHub Actions (CI/CD)
+
+Copy `dot-github/workflows/security-review.yml` → `.github/workflows/security-review.yml` in your repo.
+
+**Setup:**
+1. Add `ANTHROPIC_API_KEY` to repo secrets: Settings → Secrets and variables → Actions
+2. Copy the workflow file (rename `dot-github/` → `.github/`)
+
+**What it does on every PR:**
+- Diffs the PR branch against base and sends it to Claude for review
+- Posts a collapsible security report as a PR comment (updates on re-push, no spam)
+- **Fails the check** (blocks merge) on CRITICAL findings
+- CAUTION posts a warning but does not block
+- Large diffs (>150KB) are truncated with a manual review note
+- Add label `security-review-skip` to a PR to bypass (useful for doc-only PRs)
+
+**GitLab equivalent:** copy `dot-gitlab-ci.yml` → `.gitlab-ci.yml`. Add `ANTHROPIC_API_KEY` and optionally `GITLAB_TOKEN` (for MR note posting) to CI/CD variables. Same verdict logic and MR note behavior as GitHub.
+
+**Example PR/MR comment:**
+
+```
+🚫 Security Review: BLOCKED — Critical findings must be fixed before merge
+
+▶ Full Security Review Report (click to expand)
+
+[CRITICAL] SQL Injection in UserRepository.java
+File     : src/main/java/.../UserRepository.java:47
+Confidence: HIGH
+...
+```
+
+---
+
+## Files
+
+```
+security-champion/
+├── README.md
+├── setup.sh                               ← Install script
+├── CLAUDE.md                              ← Always-on system prompt (copy to project root)
+├── dot-claude/
+│   └── commands/
+│       └── security-review.md             ← Slash command (copy to .claude/commands/)
+├── dot-github/
+│   ├── workflows/
+│   │   └── security-review.yml            ← GitHub Actions PR review workflow
+│   └── labels.yml                         ← GitHub label definitions
+├── dot-gitlab-ci.yml                      ← GitLab CI MR review pipeline
+├── hooks/
+│   ├── pre-commit                         ← Claude Code CLI hook
+│   └── pre-commit-api.py                  ← Anthropic API hook
+└── prompts/
+    ├── SECURE_CODER_SYSTEM_PROMPT.md      ← Same as CLAUDE.md (for standalone use)
+    └── PRE_COMMIT_REVIEW_PROMPT.md        ← Full reviewer prompt (for standalone use)
+```
+
+---
+
+## GitHub Labels
+
+`setup.sh` copies `.github/labels.yml` to your repo. Sync to GitHub:
+
+```bash
+npx github-label-sync \
+  --access-token YOUR_GITHUB_TOKEN \
+  --labels .github/labels.yml \
+  your-org/your-repo
+```
+
+Labels included:
+
+| Label | Color | Purpose |
+|-------|-------|---------|
+| `security-review-skip` | yellow | Bypass review for doc-only PRs |
+| `security: critical` | red | PR has CRITICAL finding — do not merge |
+| `security: high` | yellow | PR has HIGH finding — fix before main |
+| `security: approved` | green | Review passed |
+| `security-debt` | blue | Tracks `SECURITY-DEBT` comments in code |
+| `security: false-positive` | light blue | Finding reviewed, not a real issue |
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add language profiles, vulnerability categories, and framework rules.
+
+PRs welcome for:
+- New language profiles (Ruby/Rails, Rust, PHP/Laravel, C#/.NET, Kotlin)
+- New vulnerability categories (OAuth misconfigs, mass assignment, gRPC security)
+- CI/CD integrations (Jenkins, CircleCI, Azure DevOps, Bitbucket Pipelines)
+- Framework-specific additions (Spring WebFlux, FastAPI advanced patterns, Next.js App Router)
